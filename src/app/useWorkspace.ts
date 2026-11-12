@@ -60,7 +60,7 @@ export function useWorkspace() {
   }
   function pause() {
     performance.pause();
-    judgment.clearHeld();
+    judgment.clearActiveInput();
   }
   function toggle() {
     if (performance.phase.value === "playing") pause();

@@ -9,7 +9,9 @@ export function useJudgment() {
     feedback = ref(""),
     total = ref(0);
   let run: Run | null = null;
+  // 已完成按下、等待尾端判定的长按音符
   const holding = new Map<string, { note: Note; delta: number }>();
+  // 两方向组合的输入缓冲，只保留当前仍然按住的方向
   const pending = new Map<string, { at: number; lanes: Set<Lane> }>();
   const done = computed(() => new Set(hits.value.map((h) => h.noteId)));
   const stats = computed(() => statistics(hits.value, total.value));
@@ -43,17 +45,26 @@ export function useJudgment() {
     if (!n) return;
     const delta = time - secondsAt(n.beat, run.track.bpm);
     if (n.lanes.length > 1) {
+      // 组合只收集按下事件，松开的方向会在 up() 中被移出，无法留到下一次按下
       const group = pending.get(n.id) ?? { at: time, lanes: new Set<Lane>() };
       group.lanes.add(lane);
       pending.set(n.id, group);
-      if (group.lanes.size < n.lanes.length) return;
+      // 必须两个方向此刻都处于按住状态，整组才算成功
+      const allHeld = n.lanes.every((l) => held.value.has(l));
+      if (group.lanes.size < n.lanes.length || !allHeld) return;
     }
+    // 整组一次结算，组合不会按方向各自打分
     if (n.duration > 0) holding.set(n.id, { note: n, delta });
     else finish(n, delta);
   }
   function up(lane: Lane, time: number) {
     held.value.delete(lane);
     if (!run) return;
+    // 已松开的方向必须立刻退出所有等待中的组合，半个组合不跨按键周期保留
+    for (const [noteId, group] of pending) {
+      group.lanes.delete(lane);
+      if (group.lanes.size === 0) pending.delete(noteId);
+    }
     for (const h of holding.values()) {
       if (h.note.lanes.includes(lane)) {
         const end = secondsAt(h.note.beat + h.note.duration, run.track.bpm);
@@ -73,8 +84,10 @@ export function useJudgment() {
         finish(n, time - secondsAt(n.beat, run.track.bpm), true);
     }
   }
-  function clearHeld() {
+  // 暂停时调用：清掉按住状态与未完成的组合，恢复后不继承半个组合
+  function clearActiveInput() {
     held.value.clear();
+    pending.clear();
   }
   return {
     hits,
@@ -86,6 +99,6 @@ export function useJudgment() {
     down,
     up,
     tick,
-    clearHeld,
+    clearActiveInput,
   };
 }
